@@ -646,6 +646,16 @@ form textarea::placeholder {
   gap: 9px;
 }
 
+.item-pricing {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+form select:disabled {
+  color: #8b97a9;
+  background: #f5f7fa;
+  cursor: not-allowed;
+}
+
 .section-title {
   margin: 21px 0 6px;
   padding-bottom: 10px;

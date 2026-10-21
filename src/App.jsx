@@ -31,7 +31,9 @@ const today = () => {
 };
 
 const blankCustomer = () => ({ name: "", address: "", gstin: "" });
-const blankItems = () => [{ id: Date.now(), name: "", quantity: 1, price: "" }];
+const blankItems = () => [
+  { id: Date.now(), name: "", quantity: 1, unit: "unit", price: "" },
+];
 
 function readStoredValue(key, fallback) {
   try {
@@ -68,7 +70,8 @@ function App() {
   const [customer, setCustomer] = useState(blankCustomer);
   const [invoiceDate, setInvoiceDate] = useState(today());
   const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [taxType, setTaxType] = useState("intra");
+  const [invoiceTitle, setInvoiceTitle] = useState("Tax Invoice");
+  const [taxType, setTaxType] = useState("none");
   const [gstRate, setGstRate] = useState(18);
   const [items, setItems] = useState(blankItems);
   const [activeView, setActiveView] = useState("dashboard");
@@ -81,7 +84,8 @@ function App() {
     (sum, item) => sum + Number(item.quantity || 0) * Number(item.price || 0),
     0,
   );
-  const gstAmount = subtotal * (Number(gstRate) / 100);
+  const gstAmount =
+    taxType === "none" ? 0 : subtotal * (Number(gstRate) / 100);
   const cgst = taxType === "intra" ? gstAmount / 2 : 0;
   const sgst = taxType === "intra" ? gstAmount / 2 : 0;
   const igst = taxType === "inter" ? gstAmount : 0;
@@ -101,6 +105,7 @@ function App() {
     return sortedInvoices.filter((invoice) => {
       const searchable = [
         invoice.id,
+        invoice.title,
         invoice.date,
         invoice.customer?.name,
         invoice.customer?.address,
@@ -149,7 +154,13 @@ function App() {
   function addItem() {
     setItems((previous) => [
       ...previous,
-      { id: Date.now() + Math.random(), name: "", quantity: 1, price: "" },
+      {
+        id: Date.now() + Math.random(),
+        name: "",
+        quantity: 1,
+        unit: "unit",
+        price: "",
+      },
     ]);
   }
 
@@ -179,10 +190,9 @@ function App() {
     setCustomer(blankCustomer());
     setItems(blankItems());
     setInvoiceDate(today());
-    setInvoiceNumber(
-      `YOG-${String(sequence).padStart(3, "0")}`,
-    );
-    setTaxType("intra");
+    setInvoiceNumber(`INV-${String(sequence).padStart(3, "0")}`);
+    setInvoiceTitle("Invoice");
+    setTaxType("none");
     setGstRate(18);
   }
 
@@ -195,6 +205,7 @@ function App() {
   function editInvoice(invoice) {
     setEditingId(invoice.id);
     setInvoiceNumber(invoice.id);
+    setInvoiceTitle(invoice.title || "Tax Invoice");
     setInvoiceDate(invoice.date);
     setCompany({ ...invoice.company });
     setCustomer({ ...invoice.customer });
@@ -234,7 +245,11 @@ function App() {
           Number(item.price) < 0,
       )
     ) {
-      setNotice("Check each software name, quantity and price before saving.");
+      setNotice("Check each item name, quantity and price before saving.");
+      return;
+    }
+    if (!invoiceTitle.trim()) {
+      setNotice("Please enter a title for this invoice.");
       return;
     }
     if (
@@ -251,6 +266,7 @@ function App() {
     const existing = invoices.find((invoice) => invoice.id === editingId);
     const invoice = {
       id,
+      title: invoiceTitle.trim(),
       date: invoiceDate,
       company: { ...company },
       customer: { ...customer },
@@ -301,19 +317,24 @@ function App() {
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 14;
     const contentWidth = pageWidth - margin * 2;
-    const logo = new Image();
-    logo.src = `${import.meta.env.BASE_URL}yogen-logo.png`;
-    try {
-      await logo.decode();
-    } catch (error) {
-      console.error("Could not load the Yogen logo for the invoice PDF.", error);
-      setNotice("The Yogen logo could not be loaded. Please try downloading the invoice again.");
-      return;
+    const showYogenLogo =
+      invoice.company.name?.trim().toLocaleLowerCase() === "yogen infotech";
+    let logo;
+    if (showYogenLogo) {
+      logo = new Image();
+      logo.src = `${import.meta.env.BASE_URL}yogen-logo.png`;
+      try {
+        await logo.decode();
+      } catch (error) {
+        console.error("Could not load the Yogen logo for the invoice PDF.", error);
+        setNotice("The Yogen logo could not be loaded. Please try downloading the invoice again.");
+        return;
+      }
     }
 
     doc.setFillColor(16, 34, 61);
     doc.rect(0, 0, pageWidth, 44, "F");
-    doc.addImage(logo, "PNG", margin, 7, 42, 10.5);
+    if (logo) doc.addImage(logo, "PNG", margin, 7, 42, 10.5);
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
@@ -325,7 +346,11 @@ function App() {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(191, 216, 232);
-    doc.text("SOFTWARE SALES INVOICE", margin, 39);
+    doc.text(
+      doc.splitTextToSize(invoice.title || "INVOICE", contentWidth * 0.58),
+      margin,
+      39,
+    );
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(10);
     doc.text(`Invoice: ${invoice.id}`, pageWidth - margin, 16, {
@@ -376,11 +401,11 @@ function App() {
       startY: tableStartY,
       margin: { left: margin, right: margin },
       tableWidth: contentWidth,
-      head: [["#", "Software / Service", "Qty", "Unit Price", "Amount"]],
+      head: [["#", "Description", "Qty / Unit", "Unit Price", "Amount"]],
       body: invoice.items.map((item, index) => [
         index + 1,
         item.name,
-        item.quantity,
+        `${item.quantity} ${item.unit || "unit"}`,
         pdfMoney(item.price),
         pdfMoney(item.amount),
       ]),
@@ -400,8 +425,8 @@ function App() {
       },
       columnStyles: {
         0: { cellWidth: 10, halign: "center" },
-        1: { cellWidth: contentWidth - 10 - 15 - 43 - 43 },
-        2: { cellWidth: 15, halign: "center" },
+        1: { cellWidth: contentWidth - 10 - 26 - 43 - 43 },
+        2: { cellWidth: 26, halign: "center" },
         3: { cellWidth: 43, halign: "right" },
         4: { cellWidth: 43, halign: "right" },
       },
@@ -409,7 +434,9 @@ function App() {
     const totalsY = (doc.lastAutoTable?.finalY || tableStartY) + 8;
     const totals = [
       ["Subtotal", pdfMoney(invoice.subtotal)],
-      ...(invoice.taxType === "intra"
+      ...(invoice.taxType === "none"
+        ? []
+        : invoice.taxType === "intra"
         ? [
             [`CGST (${invoice.gstRate / 2}%)`, pdfMoney(invoice.cgst)],
             [`SGST (${invoice.gstRate / 2}%)`, pdfMoney(invoice.sgst)],
@@ -479,7 +506,7 @@ function App() {
   const navigation = [
     { id: "dashboard", icon: "◫", label: "Overview" },
     { id: "create", icon: "＋", label: "Create invoice" },
-    { id: "history", icon: "▤", label: "Sales history" },
+    { id: "history", icon: "▤", label: "Invoice history" },
   ];
 
   function renderInvoiceList(list, compact = false) {
@@ -514,6 +541,7 @@ function App() {
             </div>
             <p className="invoice-customer">{invoice.customer.name}</p>
             <p className="invoice-description">
+              {invoice.title || "Tax Invoice"} ·{" "}
               {(invoice.items || []).map((item) => item.name).join(", ")}
             </p>
             <div className="invoice-bottom">
@@ -562,25 +590,25 @@ function App() {
           <div>
             <span className="eyebrow">BILLING WORKSPACE</span>
             <h2>{editingId ? `Edit ${editingId}` : "Create invoice"}</h2>
-            <p>Enter the sale details and save a searchable invoice record.</p>
+            <p>Create an invoice for rent, bills, services, products or any other charge.</p>
           </div>
           <span className="step-tag">PDF READY</span>
         </div>
         <form onSubmit={createInvoice}>
-          <h3 className="section-title">Your company</h3>
-          <label htmlFor="company-name">Company name</label>
+          <h3 className="section-title">Your details (seller / bill from)</h3>
+          <label htmlFor="company-name">Your name or business name</label>
           <input
             id="company-name"
             value={company.name}
             onChange={(event) => updateCompany("name", event.target.value)}
             required
           />
-          <label htmlFor="company-address">Company address</label>
+          <label htmlFor="company-address">Your address</label>
           <textarea
             id="company-address"
             value={company.address}
             onChange={(event) => updateCompany("address", event.target.value)}
-            placeholder="Registered business address"
+            placeholder="Your address"
             rows="2"
           />
           <div className="form-row">
@@ -611,7 +639,7 @@ function App() {
             onChange={(event) => updateCompany("email", event.target.value)}
             placeholder="Company email"
           />
-          <label htmlFor="payment-details">Payment / bank details</label>
+          <label htmlFor="payment-details">Payment instructions (optional)</label>
           <textarea
             id="payment-details"
             value={company.paymentDetails}
@@ -622,7 +650,15 @@ function App() {
             rows="2"
           />
 
-          <h3 className="section-title">Invoice & customer</h3>
+          <h3 className="section-title">Invoice & recipient</h3>
+          <label htmlFor="invoice-title">Invoice title</label>
+          <input
+            id="invoice-title"
+            value={invoiceTitle}
+            onChange={(event) => setInvoiceTitle(event.target.value)}
+            placeholder="e.g. Rent Invoice, Electricity Bill"
+            required
+          />
           <div className="form-row">
             <div>
               <label htmlFor="invoice-number">Invoice number</label>
@@ -644,7 +680,7 @@ function App() {
               />
             </div>
           </div>
-          <label htmlFor="customer-name">Customer / company name</label>
+          <label htmlFor="customer-name">Billed to (person / company)</label>
           <input
             id="customer-name"
             value={customer.name}
@@ -654,7 +690,7 @@ function App() {
                 name: event.target.value,
               }))
             }
-            placeholder="Customer's legal name"
+            placeholder="Tenant, customer or recipient name"
             required
           />
           <label htmlFor="customer-address">Customer address</label>
@@ -683,7 +719,7 @@ function App() {
             placeholder="GSTIN, if applicable"
           />
 
-          <h3 className="section-title">Software & services</h3>
+          <h3 className="section-title">Items or charges</h3>
           <div className="items-heading">
             <label>Invoice items</label>
             <button className="button button-secondary" type="button" onClick={addItem}>
@@ -704,24 +740,24 @@ function App() {
                   </button>
                 )}
               </div>
-              <label htmlFor={`item-name-${item.id}`}>Software / service</label>
+              <label htmlFor={`item-name-${item.id}`}>Description</label>
               <input
                 id={`item-name-${item.id}`}
                 value={item.name}
                 onChange={(event) =>
                   updateItem(item.id, "name", event.target.value)
                 }
-                placeholder="e.g. CRM software license"
+                placeholder="e.g. October rent, electricity, repair"
                 required
               />
-              <div className="form-row">
+              <div className="form-row item-pricing">
                 <div>
                   <label htmlFor={`item-quantity-${item.id}`}>Quantity</label>
                   <input
                     id={`item-quantity-${item.id}`}
                     type="number"
-                    min="1"
-                    step="1"
+                    min="0.01"
+                    step="any"
                     value={item.quantity}
                     onChange={(event) =>
                       updateItem(item.id, "quantity", event.target.value)
@@ -730,7 +766,18 @@ function App() {
                   />
                 </div>
                 <div>
-                  <label htmlFor={`item-price-${item.id}`}>Unit price (₹)</label>
+                  <label htmlFor={`item-unit-${item.id}`}>Unit</label>
+                  <input
+                    id={`item-unit-${item.id}`}
+                    value={item.unit || ""}
+                    onChange={(event) =>
+                      updateItem(item.id, "unit", event.target.value)
+                    }
+                    placeholder="month, kWh, item"
+                  />
+                </div>
+                <div>
+                  <label htmlFor={`item-price-${item.id}`}>Price per unit (₹)</label>
                   <input
                     id={`item-price-${item.id}`}
                     type="number"
@@ -758,6 +805,7 @@ function App() {
                 id="gst-rate"
                 value={gstRate}
                 onChange={(event) => setGstRate(Number(event.target.value))}
+                disabled={taxType === "none"}
               >
                 {[0, 5, 12, 18, 28].map((rate) => (
                   <option key={rate} value={rate}>
@@ -773,6 +821,7 @@ function App() {
                 value={taxType}
                 onChange={(event) => setTaxType(event.target.value)}
               >
+                <option value="none">No tax</option>
                 <option value="intra">CGST + SGST</option>
                 <option value="inter">IGST</option>
               </select>
@@ -783,7 +832,7 @@ function App() {
               <span>Subtotal</span>
               <strong>{money(subtotal)}</strong>
             </div>
-            {taxType === "intra" ? (
+            {taxType === "none" ? null : taxType === "intra" ? (
               <>
                 <div>
                   <span>CGST ({gstRate / 2}%)</span>
@@ -860,7 +909,7 @@ function App() {
           <div className="footer-avatar">YI</div>
           <div>
             <strong>Yogen Infotech</strong>
-            <span>Software sales manager</span>
+            <span>Invoice manager</span>
           </div>
         </div>
       </aside>
@@ -873,15 +922,15 @@ function App() {
               {activeView === "dashboard"
                 ? "Good business starts here"
                 : activeView === "history"
-                  ? "Sales history"
+                  ? "Invoice history"
                   : editingId
                     ? "Update invoice"
                     : "Create an invoice"}
             </h1>
             <p className="muted">
               {activeView === "history"
-                ? "Find every saved sale and open its original invoice."
-                : "Your software sales, invoices and customer records in one place."}
+                ? "Find every saved invoice and open its original document."
+                : "Create, save and find invoices for any product, service or bill."}
             </p>
           </div>
           <button className="admin-badge" onClick={() => setActiveView("dashboard")}>
@@ -911,8 +960,8 @@ function App() {
             <section className="welcome-card">
               <div>
                 <span className="welcome-kicker">YOUR BILLING OVERVIEW</span>
-                <h2>Keep every software sale in order.</h2>
-                <p>Create invoices, track past customers and find any sale whenever you need it.</p>
+                <h2>Make an invoice for anything.</h2>
+                <p>Create custom invoices for rent, household bills, services or product sales.</p>
                 <button className="button button-light" onClick={startNewInvoice}>
                   <span>＋</span> Create new invoice
                 </button>
@@ -928,13 +977,13 @@ function App() {
               </div>
               <div className="stat-card">
                 <div className="stat-symbol sales-symbol">₹</div>
-                <span>Total sales</span>
+                <span>Total invoiced</span>
                 <strong>{money(totalSales)}</strong>
-                <small>Including GST</small>
+                <small>Including applicable tax</small>
               </div>
               <div className="stat-card">
                 <div className="stat-symbol customer-symbol">◎</div>
-                <span>Customers billed</span>
+                <span>Recipients billed</span>
                 <strong>
                   {new Set(invoices.map((invoice) => invoice.customer?.name).filter(Boolean)).size}
                 </strong>
@@ -946,7 +995,7 @@ function App() {
                 <div>
                   <span className="eyebrow">YOUR RECORDS</span>
                   <h2>Recent invoices</h2>
-                  <p>Your latest software sales, ready to view or download.</p>
+                  <p>Your latest invoices, ready to view or download.</p>
                 </div>
                 <button
                   className="button button-secondary"
@@ -967,8 +1016,8 @@ function App() {
             <div className="panel-heading history-heading">
               <div>
                 <span className="eyebrow">ALL-TIME RECORDS</span>
-                <h2>Every sale, in one place</h2>
-                <p>Search invoice number, customer, date or software sold.</p>
+                <h2>Every invoice, in one place</h2>
+                <p>Search invoice number, recipient, date or item description.</p>
               </div>
               <button className="button button-primary" onClick={startNewInvoice}>
                 + New invoice
@@ -981,7 +1030,7 @@ function App() {
                   type="search"
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Search invoices, customers, software..."
+                  placeholder="Search invoices, recipients, items..."
                   aria-label="Search invoice history"
                 />
                 {searchTerm && (
@@ -1025,8 +1074,10 @@ function App() {
             <div className="modal-heading">
               <div>
                 <span className="eyebrow">INVOICE DETAILS</span>
-                <h2 id="invoice-modal-title">{selectedInvoice.id}</h2>
-                <p>{selectedInvoice.date}</p>
+                <h2 id="invoice-modal-title">
+                  {selectedInvoice.title || "Tax Invoice"}
+                </h2>
+                <p>{selectedInvoice.id} · {selectedInvoice.date}</p>
               </div>
               <button
                 className="modal-close"
@@ -1053,14 +1104,20 @@ function App() {
                 <div className="modal-item" key={`${item.name}-${index}`}>
                   <div>
                     <strong>{item.name}</strong>
-                    <span>{item.quantity} × {money(item.price)}</span>
+                    <span>
+                      {item.quantity} {item.unit || "unit"} × {money(item.price)}
+                    </span>
                   </div>
                   <strong>{money(item.amount)}</strong>
                 </div>
               ))}
             </div>
             <div className="modal-total">
-              <span>Grand total (incl. GST)</span>
+              <span>
+                {selectedInvoice.taxType === "none"
+                  ? "Grand total"
+                  : "Grand total (incl. GST)"}
+              </span>
               <strong>{money(selectedInvoice.grandTotal)}</strong>
             </div>
             <div className="modal-actions">
